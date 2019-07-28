@@ -19,7 +19,7 @@ class Doorpi:
         GPIO.setmode(GPIO.BOARD)
         GPIO.setup(7, GPIO.OUT)
         self.client = None
-        self.last_status = None
+        self.last_status = self.get_garage_status()
         self.subs = set()
         self.my_user_id = None
 
