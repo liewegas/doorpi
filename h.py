@@ -23,6 +23,11 @@ class Doorpi:
         self.subs = set()
         self.my_user_id = None
 
+        self.whitelist = []
+        with open('whitelist.txt', 'r') as f:
+            self.whitelist = [email for email in f.read().split('\n') if email]
+        print('Whitelist: %s' % self.whitelist)
+        self.whitelist_ids = []
     def get_garage_status(self):
         top = GPIO.input(10)
         bottom = GPIO.input(11)
@@ -52,6 +57,9 @@ class Doorpi:
                 conv_event.conversation_id,
                 conv_event.text,
                 conv_event.user_id.chat_id))
+            if conv_event.user_id.gaia_id not in self.whitelist_ids:
+                print('  unknown user, ignoring')
+                return
             cmd = conv_event.text.lower()
             if cmd == 'status':
                 status = self.get_garage_status()
@@ -88,14 +96,16 @@ class Doorpi:
         )
         all_users = user_list.get_all()
         all_conversations = conv_list.get_all(include_archived=False)
-        print('user_list %s' % user_list)
-        print('conv_list %s' % conv_list)
         print('{} known users'.format(len(all_users)))
         for user in all_users:
-            print('    {}: {}'.format(user.full_name, user.id_.gaia_id))
+            print('    {} <{}>: {}'.format(
+                user.full_name, user.emails, user.id_.gaia_id))
             if user.is_self:
                 self.my_user_id = user.id_.gaia_id
+            elif user.emails[0] in self.whitelist:
+                self.whitelist_ids.append(user.id_.gaia_id)
         print('I am %s' % self.my_user_id)
+        print('Whitelist IDs %s' % self.whitelist_ids)
         print('{} known conversations'.format(len(all_conversations)))
         for conversation in all_conversations:
             if conversation.name:
