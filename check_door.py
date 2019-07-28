@@ -1,9 +1,21 @@
+#!/usr/bin/python
+
 import RPi.GPIO as GPIO
 
 GPIO.setmode(GPIO.BOARD)
 GPIO.setup(10, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+GPIO.setup(11, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 
-if GPIO.input(10) == GPIO.HIGH:
-    print("Door is OPEN")
+top = GPIO.input(10)
+bottom = GPIO.input(11)
+
+if top == GPIO.HIGH:
+    if bottom == GPIO.LOW:
+        print("Door is OPEN")
+    else:
+        print("ERROR: Door cannot be both open and closed?")
 else:
-    print("Door is NOT OPEN")
+    if bottom == GPIO.HIGH:
+        print("Door is CLOSED")
+    else:
+        print("Door is neither OPEN nor CLOSED")
