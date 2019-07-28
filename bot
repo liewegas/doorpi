@@ -4,12 +4,14 @@ import argparse
 import asyncio
 import logging
 import os
+import time
 
 import hangups
 import appdirs
 
 import RPi.GPIO as GPIO
 
+REMINDER_HOUR = 21
 
 class Doorpi:
     def __init__(self):
@@ -21,6 +23,7 @@ class Doorpi:
         self.client = None
         self.last_status = self.get_garage_status()
         self.subs = set()
+        self.reminder_subs = set()
         self.my_user_id = None
 
         self.whitelist = []
@@ -31,12 +34,18 @@ class Doorpi:
 
         self.load_subs()
 
+
     def load_subs(self):
         with open('subs.txt', 'r') as f:
             for sub in f.read().split('\n'):
                 if sub:
                     self.subs.add(sub)
         print('Loaded subs: %s' % self.subs)
+        with open('reminder_subs.txt', 'r') as f:
+            for sub in f.read().split('\n'):
+                if sub:
+                    self.reminder_subs.add(sub)
+        print('Loaded reminder subs: %s' % self.reminder_subs)
 
     def save_subs(self):
         with open('subs.txt', 'w') as f:
@@ -134,9 +143,22 @@ class Doorpi:
         conv_list.on_event.add_observer(self.on_event)
 
         print('Waiting for chat messages...')
+        last_hour = None
         while True:
 #            print('tick')
             status = self.get_garage_status()
+
+            now = time.localtime()
+            if last_hour:
+                if (last_hour < REMINDER_HOUR and
+                    now.tm_hour >= REMINDER_HOUR and
+                    status != 'CLOSED'):
+                    for sub in self.reminder_subs:
+                        await self.send_message(
+                            sub,
+                            'Reminder: door is ' + status)
+            last_hour = now.tm_hour
+
             if status != self.last_status:
                 print('Garage door is now %s' % status)
                 self.last_status = status
