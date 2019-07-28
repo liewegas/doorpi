@@ -21,6 +21,7 @@ class Doorpi:
         self.client = None
         self.last_status = None
         self.subs = set()
+        self.my_user_id = None
 
     def get_garage_status(self):
         top = GPIO.input(10)
@@ -46,7 +47,7 @@ class Doorpi:
         print('done.')
 
     async def on_event(self, conv_event):
-        if isinstance(conv_event, hangups.ChatMessageEvent):
+        if isinstance(conv_event, hangups.ChatMessageEvent) and conv_event.user_id.gaia_id != self.my_user_id:
             print('conv %s received chat message "%s" from %s' % (
                 conv_event.conversation_id,
                 conv_event.text,
@@ -85,6 +86,24 @@ class Doorpi:
         user_list, conv_list = (
             await hangups.build_user_conversation_list(self.client)
         )
+        all_users = user_list.get_all()
+        all_conversations = conv_list.get_all(include_archived=False)
+        print('user_list %s' % user_list)
+        print('conv_list %s' % conv_list)
+        print('{} known users'.format(len(all_users)))
+        for user in all_users:
+            print('    {}: {}'.format(user.full_name, user.id_.gaia_id))
+            if user.is_self:
+                self.my_user_id = user.id_.gaia_id
+        print('I am %s' % self.my_user_id)
+        print('{} known conversations'.format(len(all_conversations)))
+        for conversation in all_conversations:
+            if conversation.name:
+                name = conversation.name
+            else:
+                name = 'Unnamed conversation ({})'.format(conversation.id_)
+            print('    {}'.format(name))
+
         conv_list.on_event.add_observer(self.on_event)
 
         print('Waiting for chat messages...')
