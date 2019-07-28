@@ -126,7 +126,7 @@ class Doorpi:
                 for sub in self.subs:
                     await self.send_message(sub, status)
 
-            await asyncio.sleep(1)
+            await asyncio.sleep(.5)
 
     async def send_message(self, conv, msg):
         print('Sending "%s" to %s...' % (msg, conv), end='')
