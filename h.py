@@ -28,6 +28,21 @@ class Doorpi:
             self.whitelist = [email for email in f.read().split('\n') if email]
         print('Whitelist: %s' % self.whitelist)
         self.whitelist_ids = []
+
+        self.load_subs()
+
+    def load_subs(self):
+        with open('subs.txt', 'r') as f:
+            for sub in f.read().split('\n'):
+                if sub:
+                    self.subs.add(sub)
+        print('Loaded subs: %s' % self.subs)
+
+    def save_subs(self):
+        with open('subs.txt', 'w') as f:
+            f.write('\n'.join(self.subs) + '\n')
+            f.close()
+
     def get_garage_status(self):
         top = GPIO.input(10)
         bottom = GPIO.input(11)
@@ -74,9 +89,11 @@ class Doorpi:
                     await self.push_garage_button()
             elif cmd == 'sub':
                 self.subs.add(conv_event.conversation_id)
+                self.save_subs()
             elif cmd == 'unsub':
                 if conv_event.conversation_id in self.subs:
                     self.subs.remove(conv_event.conversation_id)
+                self.save_subs()
             elif cmd == 'lssubs':
                 await self.send_message(
                     conv_event.conversation_id,
