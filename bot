@@ -90,10 +90,10 @@ class Doorpi:
                 await self.send_message(conv_event.conversation_id, status)
             elif cmd == 'push':
                 await self.push_garage_button()
-            elif cmd == 'open':
+            elif cmd == 'open' or cmd == 'o':
                 if self.get_garage_status() != 'OPEN':
                     await self.push_garage_button()
-            elif cmd == 'close':
+            elif cmd == 'close' or cmd == 'c':
                 if self.get_garage_status() != 'CLOSED':
                     await self.push_garage_button()
             elif cmd == 'sub':
