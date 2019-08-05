@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import time
+import datetime
 
 import hangups
 import appdirs
@@ -22,6 +23,7 @@ class Doorpi:
         GPIO.setup(7, GPIO.OUT)
         self.client = None
         self.last_status = self.get_garage_status()
+        self.last_status_time = None
         self.subs = set()
         self.reminder_subs = set()
         self.my_user_id = None
@@ -87,7 +89,12 @@ class Doorpi:
             cmd = conv_event.text.lower()
             if cmd == 'status':
                 status = self.get_garage_status()
-                await self.send_message(conv_event.conversation_id, status)
+                msg = status
+                if self.last_status_time:
+                    now = datetime.datetime(*time.localtime()[:6])
+                    delta = now - datetime.datetime(*self.last_status_time[:6])
+                    msg += " (since " + str(delta) + " ago)"
+                await self.send_message(conv_event.conversation_id, msg)
             elif cmd == 'push':
                 await self.push_garage_button()
             elif cmd == 'open' or cmd == 'o':
@@ -162,6 +169,7 @@ class Doorpi:
             if status != self.last_status:
                 print('Garage door is now %s' % status)
                 self.last_status = status
+                self.last_status_time = now
                 for sub in self.subs:
                     await self.send_message(sub, status)
 
