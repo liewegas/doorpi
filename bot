@@ -6,6 +6,7 @@ import logging
 import os
 import time
 import datetime
+import subprocess
 
 import hangups
 import appdirs
@@ -77,6 +78,7 @@ class Doorpi:
         GPIO.output(7, False)
         print('done.')
 
+
     async def on_event(self, conv_event):
         if isinstance(conv_event, hangups.ChatMessageEvent) and conv_event.user_id.gaia_id != self.my_user_id:
             print('conv %s received chat message "%s" from %s' % (
@@ -87,14 +89,15 @@ class Doorpi:
                 print('  unknown user, ignoring')
                 return
             cmd = conv_event.text.lower()
-            if cmd == 'status':
+            if cmd == 'status' or cmd == 's':
                 status = self.get_garage_status()
                 msg = status
                 if self.last_status_time:
                     now = datetime.datetime(*time.localtime()[:6])
                     delta = now - datetime.datetime(*self.last_status_time[:6])
                     msg += " (since " + str(delta) + " ago)"
-                await self.send_message(conv_event.conversation_id, msg)
+                await self.send_message(conv_event.conversation_id, msg,
+                                        attach=True)
             elif cmd == 'push':
                 await self.push_garage_button()
             elif cmd == 'open' or cmd == 'o':
@@ -163,7 +166,8 @@ class Doorpi:
                     for sub in self.reminder_subs:
                         await self.send_message(
                             sub,
-                            'Reminder: door is ' + status)
+                            'Reminder: door is ' + status,
+                            attach=True)
             last_hour = now.tm_hour
 
             if status != self.last_status:
@@ -171,11 +175,26 @@ class Doorpi:
                 self.last_status = status
                 self.last_status_time = now
                 for sub in self.subs:
-                    await self.send_message(sub, status)
+                    await self.send_message(sub, status,
+                                            attach=True)
 
             await asyncio.sleep(.5)
 
-    async def send_message(self, conv, msg):
+    async def send_message(self, conv, msg, attach=False, image_id=None):
+        if attach:
+            print('Grabbing frame...')
+            subprocess.call(['fswebcam', '-r', '1280x720',
+                             '--jpeg', '85',
+                             '-D', '1',
+                             '--rotate', '180',
+                             'cap.jpg'])
+            print('Uploading...')
+            with open('cap.jpg', 'rb') as f:
+                image = await doorpi.client.upload_image(
+                    f,
+                    return_uploaded_image=True)
+                image_id = image.image_id
+
         print('Sending "%s" to %s...' % (msg, conv), end='')
         request = hangups.hangouts_pb2.SendChatMessageRequest(
             request_header=self.client.get_request_header(),
@@ -191,6 +210,8 @@ class Doorpi:
                 ],
             ),
         )
+        if image_id:
+            request.existing_media.photo.photo_id = image_id
         await self.client.send_chat_message(request)
         print('done.')
 
