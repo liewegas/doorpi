@@ -1,19 +1,33 @@
 #!/usr/bin/env python
 
 import argparse
-import asyncio
-import logging
+import datetime
 import os
 import time
-import datetime
-import subprocess
+import logging
+import requests
+import threading
+import time
 
-import hangups
-import appdirs
+from dotenv import load_dotenv
+from flask import Flask, request
+from twilio.rest import Client
+from twilio.twiml.messaging_response import MessagingResponse, Message
 
 import RPi.GPIO as GPIO
 
-REMINDER_HOUR = 21
+
+log = logging.getLogger('doorpi')
+
+load_dotenv()
+
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")
+
+REMINDER_HOUR = int(os.getenv("REMINDER_HOUR"))
+
+
 
 class Doorpi:
     def __init__(self):
@@ -27,33 +41,43 @@ class Doorpi:
         self.last_status_time = None
         self.subs = set()
         self.reminder_subs = set()
-        self.my_user_id = None
 
-        self.whitelist = []
-        with open('whitelist.txt', 'r') as f:
-            self.whitelist = [email for email in f.read().split('\n') if email]
-        print('Whitelist: %s' % self.whitelist)
-        self.whitelist_ids = []
+        self.client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
         self.load_subs()
 
+        self.last_hour = None
+
+        self.bg = None
+        self._stop = True
 
     def load_subs(self):
         with open('subs.txt', 'r') as f:
             for sub in f.read().split('\n'):
                 if sub:
                     self.subs.add(sub)
-        print('Loaded subs: %s' % self.subs)
+        log.info('Loaded subs: %s' % self.subs)
         with open('reminder_subs.txt', 'r') as f:
             for sub in f.read().split('\n'):
                 if sub:
                     self.reminder_subs.add(sub)
-        print('Loaded reminder subs: %s' % self.reminder_subs)
+        log.info('Loaded reminder subs: %s' % self.reminder_subs)
 
     def save_subs(self):
         with open('subs.txt', 'w') as f:
             f.write('\n'.join(self.subs) + '\n')
             f.close()
+
+    def send_subs(self, who):
+        what = []
+        if who in self.subs:
+            what.append('door activity')
+        if who in self.reminder_subs:
+            what.append('door open reminders')
+        self.send_message(
+            who,
+            f'You are subscribed to {" and ".join(what)}'
+        )
 
     def get_garage_status(self):
         top = GPIO.input(10)
@@ -68,219 +92,160 @@ class Doorpi:
                 status = 'CLOSED'
             else:
                 status = 'PARTIALLY-OPEN'
-#        print('....Door is %s' % status)
+        log.debug('....Door is %s' % status)
         return status
 
-    async def push_garage_button(self):
-        print('Pushing garage button...', end='')
+    def push_garage_button(self):
+        log.info('Pushing garage button...')
         GPIO.output(7, True)
-        await asyncio.sleep(.5)
+        time.sleep(.5)
         GPIO.output(7, False)
-        print('done.')
+        log.info('Pushed garage button')
 
+    def send_message(self, who, message):
+        log.info(f"send_message {who} '{message}'")
+        self.client.messages.create(body=message, from_=TWILIO_NUMBER, to=who)
 
-    async def on_event(self, conv_event):
-        if isinstance(conv_event, hangups.ChatMessageEvent) and conv_event.user_id.gaia_id != self.my_user_id:
-            print('conv %s received chat message "%s" from %s' % (
-                conv_event.conversation_id,
-                conv_event.text,
-                conv_event.user_id.chat_id))
-            if conv_event.user_id.gaia_id not in self.whitelist_ids:
-                print('  unknown user, ignoring')
-                return
-            cmd = conv_event.text.lower()
-            if cmd == 'status' or cmd == 's':
-                status = self.get_garage_status()
-                msg = status
-                if self.last_status_time:
-                    now = datetime.datetime(*time.localtime()[:6])
-                    delta = now - datetime.datetime(*self.last_status_time[:6])
-                    msg += " (since " + str(delta) + " ago)"
-                await self.send_message(conv_event.conversation_id, msg,
-                                        attach=True)
-            elif cmd == 'push':
-                await self.push_garage_button()
-            elif cmd == 'open' or cmd == 'o':
-                if self.get_garage_status() != 'OPEN':
-                    await self.push_garage_button()
-            elif cmd == 'close' or cmd == 'c':
-                if self.get_garage_status() != 'CLOSED':
-                    await self.push_garage_button()
-            elif cmd == 'sub':
-                self.subs.add(conv_event.conversation_id)
-                self.save_subs()
-            elif cmd == 'unsub':
-                if conv_event.conversation_id in self.subs:
-                    self.subs.remove(conv_event.conversation_id)
-                self.save_subs()
-            elif cmd == 'lssubs':
-                await self.send_message(
-                    conv_event.conversation_id,
-                    'Subs are %s' % self.subs,
-                )
-            elif cmd == 'whoami':
-                await self.send_message(
-                    conv_event.conversation_id,
-                    'You are %s' % conv_event.conversation_id
-                )
-                    
+    def receive_message(self, who, message):
+        cmd = message.lower()
+        log.info(f'{who}: {cmd}')
 
-    async def main(self, args):
-        print('Loading conversation list...')
-        user_list, conv_list = (
-            await hangups.build_user_conversation_list(self.client)
-        )
-        all_users = user_list.get_all()
-        all_conversations = conv_list.get_all(include_archived=False)
-        print('{} known users'.format(len(all_users)))
-        for user in all_users:
-            print('    {} <{}>: {}'.format(
-                user.full_name, user.emails, user.id_.gaia_id))
-            if user.is_self:
-                self.my_user_id = user.id_.gaia_id
-            elif user.emails[0] in self.whitelist:
-                self.whitelist_ids.append(user.id_.gaia_id)
-        print('I am %s' % self.my_user_id)
-        print('Whitelist IDs %s' % self.whitelist_ids)
-        print('{} known conversations'.format(len(all_conversations)))
-        for conversation in all_conversations:
-            if conversation.name:
-                name = conversation.name
-            else:
-                name = 'Unnamed conversation ({})'.format(conversation.id_)
-            print('    {}'.format(name))
-
-        conv_list.on_event.add_observer(self.on_event)
-
-        print('Waiting for chat messages...')
-        last_hour = None
-        while True:
-#            print('tick')
+        if cmd == 'status' or cmd == 's':
             status = self.get_garage_status()
+            msg = status
+            if self.last_status_time:
+                now = datetime.datetime(*time.localtime()[:6])
+                delta = now - datetime.datetime(*self.last_status_time[:6])
+                msg += " (since " + str(delta) + " ago)"
+            self.send_message(who, msg)
+            self.send_subs(who)
 
+        elif cmd == 'push':
+            self.push_garage_button()
+        elif cmd == 'open' or cmd == 'o':
+            if self.get_garage_status() != 'OPEN':
+                self.push_garage_button()
+        elif cmd == 'close' or cmd == 'c':
+            if self.get_garage_status() != 'CLOSED':
+                self.push_garage_button()
+
+        elif cmd == 'sub':
+            self.subs.add(who)
+            self.reminder_subs.add(who)
+            self.save_subs()
+            self.send_subs(who)
+        elif cmd == 'sub activity':
+            self.subs.add(who)
+            self.save_subs()
+            self.send_subs(who)
+        elif cmd == 'sub reminders':
+            self.reminder_subs.add(who)
+            self.save_subs()
+            self.send_subs(who)
+
+        elif cmd == 'unsub':
+            if who in self.subs:
+                self.subs.remove(who)
+            if who in self.reminder_subs:
+                self.reminder_subs.remove(who)
+            self.save_subs()
+            self.send_subs(who)
+        elif cmd == 'unsub activity':
+            if who in self.subs:
+                self.subs.remove(who)
+            self.save_subs()
+            self.send_subs(who)
+        elif cmd == 'unsub reminders':
+            if who in self.reminder_subs:
+                self.reminder_subs.remove(who)
+            self.save_subs()
+            self.send_subs(who)
+
+        elif cmd == 'lssubs':
+            self.send_message(
+                who,
+                f'Activity: {self.subs}\nReminders: {self.reminder_subs}'
+            )
+        elif cmd == 'whoami':
+            self.send_message(
+                who,
+                'You are %s' % who
+            )
+            
+    def do_main(self):
+        log.info('main start')
+        while not self._stop:
+            status = self.get_garage_status()
+            
             now = time.localtime()
-            if last_hour:
-                if (last_hour < REMINDER_HOUR and
+            if self.last_hour:
+                if (self.last_hour < REMINDER_HOUR and
                     now.tm_hour >= REMINDER_HOUR and
                     status != 'CLOSED'):
                     for sub in self.reminder_subs:
-                        await self.send_message(
+                        self.send_message(
                             sub,
-                            'Reminder: door is ' + status,
-                            attach=True)
-            last_hour = now.tm_hour
+                            'Reminder: door is ' + status
+                        )
+            self.last_hour = now.tm_hour
 
             if status != self.last_status:
-                print('Garage door is now %s' % status)
+                log.info('Garage door is now %s' % status)
                 self.last_status = status
                 self.last_status_time = now
                 for sub in self.subs:
-                    await self.send_message(sub, status,
-                                            attach=True)
+                    self.send_message(sub, status)
 
-            await asyncio.sleep(.5)
+            time.sleep(1)
+        log.info('main exit')
 
-    async def send_message(self, conv, msg, attach=False, image_id=None):
-        if attach:
-            print('Grabbing frame...')
-            subprocess.call(['fswebcam', '-r', '1280x720',
-                             '--jpeg', '85',
-                             '-D', '1',
-                             '--rotate', '180',
-                             'cap.jpg'])
-            print('Uploading...')
-            with open('cap.jpg', 'rb') as f:
-                image = await doorpi.client.upload_image(
-                    f,
-                    return_uploaded_image=True)
-                image_id = image.image_id
+    def start(self):
+        log.info('start')
+        assert not self.bg
+        assert self._stop
+        self.bg = threading.Thread(target=doorpi.do_main, args=())
+        self._stop = False
+        self.bg.start()
 
-        print('Sending "%s" to %s...' % (msg, conv), end='')
-        request = hangups.hangouts_pb2.SendChatMessageRequest(
-            request_header=self.client.get_request_header(),
-            event_request_header=hangups.hangouts_pb2.EventRequestHeader(
-                conversation_id=hangups.hangouts_pb2.ConversationId(
-                    id=conv
-                ),
-                client_generated_id=self.client.get_client_generated_id(),
-            ),
-            message_content=hangups.hangouts_pb2.MessageContent(
-                segment=[
-                    hangups.ChatMessageSegment(msg).serialize()
-                ],
-            ),
-        )
-        if image_id:
-            request.existing_media.photo.photo_id = image_id
-        await self.client.send_chat_message(request)
-        print('done.')
+    def stop(self):
+        log.info('stop')
+        assert not self._stop
+        assert self.bg
+        self._stop = True
+        self.bg.join()
+        self.bg = None
 
-    
-    
 
 ###########
 
-def _get_parser(extra_args):
-    """Return ArgumentParser with any extra arguments."""
+doorpi = Doorpi()
+app = Flask(__name__)
+
+@app.route('/sms', methods=['POST'])
+def inbound_sms():
+    who = request.form['From']
+    body = request.form['Body']
+    doorpi.receive_message(who, body)
+    response = MessagingResponse()
+    return str(response)
+
+def _get_parser():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    dirs = appdirs.AppDirs('hangups', 'hangups')
-    default_token_path = os.path.join(dirs.user_cache_dir, 'refresh_token.txt')
-    parser.add_argument(
-        '--token-path', default=default_token_path,
-        help='path used to store OAuth refresh token'
     )
     parser.add_argument(
         '-d', '--debug', action='store_true',
         help='log detailed debugging messages'
     )
-    for extra_arg in extra_args:
-        parser.add_argument(extra_arg, required=True)
     return parser
 
-async def _async_main(example_coroutine, client, args):
-    """Run the example coroutine."""
-    # Spawn a task for hangups to run in parallel with the example coroutine.
-    task = asyncio.ensure_future(client.connect())
-
-    # Wait for hangups to either finish connecting or raise an exception.
-    on_connect = asyncio.Future()
-    client.on_connect.add_observer(lambda: on_connect.set_result(None))
-    done, _ = await asyncio.wait(
-        (on_connect, task), return_when=asyncio.FIRST_COMPLETED
-    )
-    await asyncio.gather(*done)
-
-    # Run the example coroutine. Afterwards, disconnect hangups gracefully and
-    # yield the hangups task to handle any exceptions.
-    try:
-        await example_coroutine(args)
-    except asyncio.CancelledError:
-        pass
-    finally:
-        await client.disconnect()
-        await task
-
 if __name__ == '__main__':
-    extra_args = []
-    args = _get_parser(extra_args).parse_args()
-    logging.basicConfig(level=logging.DEBUG if args.debug else logging.WARNING)
+    log.info('main start')
+    args = _get_parser().parse_args()
+    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
 
-    doorpi = Doorpi()
-    # Obtain hangups authentication cookies, prompting for credentials from
-    # standard input if necessary.
-    cookies = hangups.auth.get_auth_stdin(args.token_path)
-    doorpi.client = hangups.Client(cookies)
-    loop = asyncio.get_event_loop()
-    task = asyncio.ensure_future(_async_main(doorpi.main, doorpi.client, args),
-                                 loop=loop)
+    doorpi.start()
+    app.run(host='0.0.0.0', debug=True, use_reloader=False)
+    doorpi.stop()
 
-    try:
-        loop.run_until_complete(task)
-    except KeyboardInterrupt:
-        task.cancel()
-        loop.run_until_complete(task)
-    finally:
-        loop.close()
-
+    log.info('main end')
