@@ -1,8 +1,8 @@
 ---
 name: "Sage test true"
 on:
-  - pull_request:
-      types:
+  pull_request:
+    types:
       - edited
       - opened
       - reopened
