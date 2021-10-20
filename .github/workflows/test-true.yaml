@@ -1,0 +1,16 @@
+---
+name: "Sage test true"
+on:
+  - pull_request
+jobs:
+  check_pr_description:
+    runs-on: ubuntu-latest
+    name: Test job foo
+    steps:
+      - name: Action
+        id: check
+        uses: liewegas/ceph-pr-checklist-action@v0.1
+        with:
+          description: 'hi'
+      - name: echo
+        run: echo "Errors were ${{steps.check.outputs.errors}}"
