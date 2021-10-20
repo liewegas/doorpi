@@ -1,7 +1,11 @@
 ---
 name: "Sage test true"
 on:
-  - pull_request
+  - pull_request:
+      - edited
+      - opened
+      - reopened
+      - ready_for_review
 jobs:
   check_pr_description:
     runs-on: ubuntu-latest
