@@ -15,5 +15,3 @@ jobs:
       - name: Action
         id: check
         uses: liewegas/ceph-pr-checklist-action@master
-      - name: echo
-        run: echo "Errors were ${{steps.check.outputs.errors}}"
