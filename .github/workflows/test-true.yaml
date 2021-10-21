@@ -14,7 +14,7 @@ jobs:
     steps:
       - name: Action
         id: check
-        uses: liewegas/ceph-pr-checklist-action@v0.1
+        uses: liewegas/ceph-pr-checklist-action@v0.2
         with:
           description: 'hi'
       - name: echo
