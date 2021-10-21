@@ -1,0 +1,17 @@
+---
+name: "PR Checklist"
+on:
+  pull_request:
+    types:
+      - edited
+      - opened
+      - reopened
+      - ready_for_review
+jobs:
+  check_pr_description:
+    runs-on: ubuntu-latest
+    name: Verify checklist
+    steps:
+      - name: Action
+        id: check
+        uses: liewegas/ceph-pr-checklist-action@master
