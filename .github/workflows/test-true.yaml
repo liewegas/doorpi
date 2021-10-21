@@ -1,5 +1,5 @@
 ---
-name: "Sage test true"
+name: "PR Checklist"
 on:
   pull_request:
     types:
@@ -10,7 +10,7 @@ on:
 jobs:
   check_pr_description:
     runs-on: ubuntu-latest
-    name: Test job foo
+    name: Verify checklist
     steps:
       - name: Action
         id: check
